@@ -1,6 +1,6 @@
 name: "astrbot_plugin_balance"
 desc: "一个简单的API余额查询与IP查询小插件, 支持硅基流动，DeepSeek与OpenAI余额查询及IP地址查询功能。"
 help: "指令：/硅基余额 <API密钥> /DS余额 <API密钥> /GPT余额 <API密钥> /查询IP <IP地址/域名> /查询帮助"
-version: "v1.1.0"
+version: "v1.3.0"
 author: "Chris"
 repo: "https://github.com/Chris95743/astrbot_plugin_balance"
