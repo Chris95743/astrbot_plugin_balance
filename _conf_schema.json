@@ -1,0 +1,65 @@
+{
+  "network_config": {
+    "description": "网络测试配置",
+    "type": "object",
+    "hint": "配置网络连通性测试相关参数",
+    "items": {
+      "ping_timeout": {
+        "description": "Ping超时时间",
+        "type": "float",
+        "hint": "单位：秒，Ping命令的最大等待时间",
+        "default": 30.0
+      },
+      "tcp_timeout": {
+        "description": "TCP连接超时时间",
+        "type": "float",
+        "hint": "单位：秒，TCP端口连接测试的超时时间",
+        "default": 3.0
+      },
+      "test_ports": {
+        "description": "测试端口列表",
+        "type": "list",
+        "hint": "网络连通性测试时要检测的TCP端口，用逗号分隔，例如：22,23,80,443",
+        "default": [22, 80, 443, 3306, 5000, 6099, 6185]
+      }
+    }
+  },
+  "api_config": {
+    "description": "API配置",
+    "type": "object", 
+    "hint": "各种API服务的配置参数",
+    "items": {
+      "request_timeout": {
+        "description": "API请求超时时间",
+        "type": "float",
+        "hint": "单位：秒，API请求的最大等待时间",
+        "default": 10.0
+      },
+      "max_retries": {
+        "description": "最大重试次数",
+        "type": "int",
+        "hint": "API请求失败时的最大重试次数",
+        "default": 3
+      }
+    }
+  },
+  "display_config": {
+    "description": "显示配置",
+    "type": "object",
+    "hint": "控制查询结果的显示方式",
+    "items": {
+      "show_debug_info": {
+        "description": "显示调试信息",
+        "type": "bool",
+        "hint": "在批量查询时是否显示解析到的密钥数量等调试信息",
+        "default": false
+      },
+      "mask_api_keys": {
+        "description": "隐藏API密钥",
+        "type": "bool", 
+        "hint": "是否在显示时用星号隐藏部分API密钥内容以保护隐私",
+        "default": true
+      }
+    }
+  }
+}
