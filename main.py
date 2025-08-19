@@ -17,11 +17,6 @@ OPENAI_API_BASE_URL = "https://api.openai.com"
 DEEPSEEK_API_URL = "https://api.deepseek.com/user/balance"
 IP_API_URL = "http://ip-api.com/json/"
 
-# 网络测试配置
-PING_TIMEOUT = 30.0
-TCP_TIMEOUT = 3
-TEST_PORTS = [22, 23, 80, 443, 5000, 6099, 6185]
-
 async def query_siliconflow_balance(api_key):
     """查询硅基流动平台余额信息"""
     headers = {
@@ -118,7 +113,9 @@ async def query_ds_balance(api_key):
         except aiohttp.ClientError as e:
             return f"请求错误: {e}"
 
-async def ping_host(host, count=4):
+async def ping_host(host, count=4, ping_timeout=30.0, test_ports=None, tcp_timeout=3.0):
+    if test_ports is None:
+        test_ports = [22, 23, 80, 443, 5000, 6099, 6185]
     """使用系统ping命令测试主机连通性和延迟"""
     try:
         system = platform.system().lower()
@@ -149,14 +146,14 @@ async def ping_host(host, count=4):
                     stderr=asyncio.subprocess.PIPE
                 )
                 
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=PING_TIMEOUT)
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=ping_timeout)
                 
                 if process.returncode == 0:
                     output = decode_output(stdout)
                     ping_result = parse_ping_output(output, host)
                     
                     # 在ping成功时也测试端口连通性
-                    port_result = await port_connectivity_test(host)
+                    port_result = await port_connectivity_test(host, test_ports, tcp_timeout)
                     return ping_result + port_result
                 else:
                     error = decode_output(stderr)
@@ -169,14 +166,16 @@ async def ping_host(host, count=4):
                 continue
         
         # 如果所有ping命令都失败，使用Python实现的简单连通性测试
-        return await fallback_connectivity_test(host)
+        return await fallback_connectivity_test(host, test_ports, tcp_timeout)
             
     except asyncio.TimeoutError:
-        return f"Ping超时: {host} ({PING_TIMEOUT}秒无响应)"
+        return f"Ping超时: {host} ({ping_timeout}秒无响应)"
     except Exception as e:
-        return await fallback_connectivity_test(host)
+        return await fallback_connectivity_test(host, test_ports, tcp_timeout)
 
-async def fallback_connectivity_test(host, timeout=TCP_TIMEOUT):
+async def fallback_connectivity_test(host, test_ports=None, timeout=3.0):
+    if test_ports is None:
+        test_ports = [22, 23, 80, 443, 5000, 6099, 6185]
     """备用连通性测试（当ping命令不可用时）"""
     result = f"连通性测试 - {host}:\n"
     result += "⚠️ 系统ping命令不可用，使用TCP连接测试\n\n"
@@ -195,7 +194,7 @@ async def fallback_connectivity_test(host, timeout=TCP_TIMEOUT):
             return result
         
         # 测试指定端口的连通性
-        for port in TEST_PORTS:
+        for port in test_ports:
             start_time = time.time()
             try:
                 reader, writer = await asyncio.wait_for(
@@ -217,7 +216,7 @@ async def fallback_connectivity_test(host, timeout=TCP_TIMEOUT):
                 connection_results.append(f"❌ 端口{port}: 失败")
         
         # 构建结果
-        result += f"测试端口: {successful_connections}/{len(TEST_PORTS)}个可连接\n"
+        result += f"测试端口: {successful_connections}/{len(test_ports)}个可连接\n"
         
         if successful_connections > 0:
             avg_time = total_time / successful_connections
@@ -246,7 +245,9 @@ async def fallback_connectivity_test(host, timeout=TCP_TIMEOUT):
     
     return result
 
-async def port_connectivity_test(host, timeout=TCP_TIMEOUT):
+async def port_connectivity_test(host, test_ports=None, timeout=3.0):
+    if test_ports is None:
+        test_ports = [22, 23, 80, 443, 5000, 6099, 6185]
     """端口连通性测试"""
     successful_connections = 0
     total_time = 0
@@ -254,7 +255,7 @@ async def port_connectivity_test(host, timeout=TCP_TIMEOUT):
     
     try:
         # 测试指定端口的连通性
-        for port in TEST_PORTS:
+        for port in test_ports:
             start_time = time.time()
             try:
                 reader, writer = await asyncio.wait_for(
@@ -277,7 +278,7 @@ async def port_connectivity_test(host, timeout=TCP_TIMEOUT):
         
         # 构建结果
         result = f"\n🔌 端口连通性测试:\n"
-        result += f"测试端口: {successful_connections}/{len(TEST_PORTS)}个可连接\n"
+        result += f"测试端口: {successful_connections}/{len(test_ports)}个可连接\n"
         
         if successful_connections > 0:
             avg_time = total_time / successful_connections
@@ -501,6 +502,25 @@ class PluginBalanceIP(Star):
         self.context = context  # 保存context对象，供后续方法使用
         # 如果没有提供config，尝试手动创建它
         self.config = config or AstrBotConfig()
+        self._load_config()
+
+    def _load_config(self):
+        """加载并初始化插件配置"""
+        # 网络配置
+        network_config = self.config.get("network_config", {})
+        self.ping_timeout = network_config.get("ping_timeout", 30.0)
+        self.tcp_timeout = network_config.get("tcp_timeout", 3.0)
+        self.test_ports = network_config.get("test_ports", [22, 23, 80, 443, 5000, 6099, 6185])
+        
+        # API配置
+        api_config = self.config.get("api_config", {})
+        self.request_timeout = api_config.get("request_timeout", 10.0)
+        self.max_retries = api_config.get("max_retries", 3)
+        
+        # 显示配置
+        display_config = self.config.get("display_config", {})
+        self.show_debug_info = display_config.get("show_debug_info", False)
+        self.mask_api_keys = display_config.get("mask_api_keys", True)
 
     # 提取API密钥或IP地址的公共方法
     def _get_command_argument(self, event: AstrMessageEvent):
@@ -579,7 +599,10 @@ class PluginBalanceIP(Star):
                     seen.add(key)
             
             # 添加重复提醒到结果中（通过在第一个重复密钥前添加标记）
-            self._duplicate_warning = f"⚠️ 检测到重复的API密钥: {', '.join([self._mask_api_key(key) for key in duplicates])}"
+            if self.show_debug_info:
+                self._duplicate_warning = f"⚠️ 检测到重复的API密钥: {', '.join([self._mask_api_key(key) for key in duplicates])}"
+            else:
+                self._duplicate_warning = f"⚠️ 检测到重复的API密钥"
         else:
             self._duplicate_warning = None
         
@@ -622,6 +645,8 @@ class PluginBalanceIP(Star):
 
     def _mask_api_key(self, api_key):
         """掩码API密钥，保护隐私"""
+        if not self.mask_api_keys:
+            return api_key
         if len(api_key) <= 8:
             return api_key[:2] + "*" * (len(api_key) - 4) + api_key[-2:]
         return api_key[:4] + "*" * (len(api_key) - 8) + api_key[-4:]
@@ -792,7 +817,7 @@ class PluginBalanceIP(Star):
             return
 
         yield event.plain_result(f"正在ping {target}，请稍候...")
-        result = await ping_host(target)
+        result = await ping_host(target, 4, self.ping_timeout, self.test_ports, self.tcp_timeout)
         yield event.plain_result(result)
 
     # 查询帮助命令
@@ -816,6 +841,13 @@ class PluginBalanceIP(Star):
             "/查询IP <IP地址/域名>: 查询IP归属地和运营商信息\n"
             "/ping <域名/IP地址>: 测试网络连通性和延迟\n"
             "/查询帮助: 显示此帮助信息\n\n"
-            "🔒 安全提示：批量查询会自动隐藏部分密钥内容保护隐私"
+            f"⚙️ 当前配置：\n"
+            f"• 测试端口: {', '.join(map(str, self.test_ports))}\n"
+            f"• Ping超时: {self.ping_timeout}秒\n"
+            f"• TCP超时: {self.tcp_timeout}秒\n"
+            f"• 显示调试信息: {'是' if self.show_debug_info else '否'}\n"
+            f"• 隐藏API密钥: {'是' if self.mask_api_keys else '否'}\n\n"
+            "🔒 安全提示：批量查询会自动隐藏部分密钥内容保护隐私\n"
+            "📝 配置提示：可通过插件配置文件自定义测试端口和其他参数"
         )
         yield event.plain_result(help_text)
