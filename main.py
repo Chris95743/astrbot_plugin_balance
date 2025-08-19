@@ -523,40 +523,131 @@ class PluginBalanceIP(Star):
             return None
         return parts[1].strip()
 
+    # 提取多个API密钥的方法（支持批量查询）
+    def _get_multiple_api_keys(self, event: AstrMessageEvent):
+        messages = event.get_messages()
+        if not messages:
+            return []
+
+        message_text = ""
+        for message in messages:
+            if isinstance(message, At):
+                continue  # 跳过 @ 消息
+            message_text = message.text
+            break
+
+        if not message_text:
+            return []
+
+        # 移除命令部分，获取参数部分
+        parts = message_text.split(None, 1)  # 只分割一次，保留后面的所有内容
+        if len(parts) < 2:
+            return []
+        
+        api_keys_text = parts[1].strip()
+        
+        # 支持多种分隔符：换行符、空格、逗号
+        # 首先按换行符分割
+        lines = api_keys_text.split('\n')
+        api_keys = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # 如果行中包含空格或逗号，进一步分割
+            if ' ' in line or ',' in line:
+                # 同时按空格和逗号分割
+                sub_keys = line.replace(',', ' ').split()
+                api_keys.extend([key.strip() for key in sub_keys if key.strip()])
+            else:
+                api_keys.append(line)
+        
+        # 过滤空字符串
+        filtered_keys = [key for key in api_keys if key]
+        
+        # 检查是否有重复的API key
+        unique_keys = list(dict.fromkeys(filtered_keys))
+        if len(filtered_keys) != len(unique_keys):
+            # 找出重复的API key
+            seen = set()
+            duplicates = set()
+            for key in filtered_keys:
+                if key in seen:
+                    duplicates.add(key)
+                else:
+                    seen.add(key)
+            
+            # 添加重复提醒到结果中（通过在第一个重复密钥前添加标记）
+            self._duplicate_warning = f"⚠️ 检测到重复的API密钥: {', '.join([self._mask_api_key(key) for key in duplicates])}"
+        else:
+            self._duplicate_warning = None
+        
+        return unique_keys
+
+    # 批量查询方法
+    async def _batch_query_balance(self, api_keys, query_func, platform_name):
+        """批量查询余额的通用方法"""
+        if not api_keys:
+            return f"请输入API密钥，格式为：{platform_name}余额 <API密钥1> [API密钥2] [API密钥3]...\n支持用空格、换行符或逗号分隔多个密钥"
+        
+        if len(api_keys) == 1:
+            # 单个密钥，直接查询
+            return await query_func(api_keys[0])
+        
+        # 多个密钥，批量查询
+        results = []
+        results.append(f"=== {platform_name}批量余额查询结果 ===")
+        results.append(f"共查询 {len(api_keys)} 个API密钥\n")
+        
+        # 如果有重复密钥，显示提醒
+        if hasattr(self, '_duplicate_warning') and self._duplicate_warning:
+            results.append(self._duplicate_warning + "\n")
+        
+        for i, api_key in enumerate(api_keys, 1):
+            # 隐藏部分密钥内容以保护隐私
+            masked_key = self._mask_api_key(api_key)
+            results.append(f"【密钥 {i}】 {masked_key}")
+            results.append("-" * 50)
+            
+            try:
+                result = await query_func(api_key)
+                results.append(result)
+            except Exception as e:
+                results.append(f"查询失败: {str(e)}")
+            
+            results.append("")  # 添加空行分隔
+        
+        return "\n".join(results)
+
+    def _mask_api_key(self, api_key):
+        """掩码API密钥，保护隐私"""
+        if len(api_key) <= 8:
+            return api_key[:2] + "*" * (len(api_key) - 4) + api_key[-2:]
+        return api_key[:4] + "*" * (len(api_key) - 8) + api_key[-4:]
+
     # 查询硅基余额命令
     @filter.command("硅基余额")
     async def siliconflow_balance(self, event: AstrMessageEvent):
-        """查询硅基流动余额"""
-        api_key = self._get_command_argument(event)
-        if not api_key:
-            yield event.plain_result("请输入API密钥，格式为：硅基余额 <你的API密钥>")
-            return
-
-        result = await query_siliconflow_balance(api_key)
+        """查询硅基流动余额（支持批量查询）"""
+        api_keys = self._get_multiple_api_keys(event)
+        result = await self._batch_query_balance(api_keys, query_siliconflow_balance, "硅基流动")
         yield event.plain_result(result)
 
     # 查询GPT余额命令
     @filter.command("GPT余额")
     async def openai_balance(self, event: AstrMessageEvent):
-        """查询OpenAI余额"""
-        api_key = self._get_command_argument(event)
-        if not api_key:
-            yield event.plain_result("请输入API密钥，格式为：GPT余额 <你的API密钥>")
-            return
-
-        result = await query_openai_balance(api_key)
+        """查询OpenAI余额（支持批量查询）"""
+        api_keys = self._get_multiple_api_keys(event)
+        result = await self._batch_query_balance(api_keys, query_openai_balance, "OpenAI")
         yield event.plain_result(result)
 
     # 查询DS余额命令
     @filter.command("DS余额")
     async def ds_balance(self, event: AstrMessageEvent):
-        """查询DeepSeek余额"""
-        api_key = self._get_command_argument(event)
-        if not api_key:
-            yield event.plain_result("请输入API密钥，格式为：DS余额 <你的API密钥>")
-            return
-
-        result = await query_ds_balance(api_key)
+        """查询DeepSeek余额（支持批量查询）"""
+        api_keys = self._get_multiple_api_keys(event)
+        result = await self._batch_query_balance(api_keys, query_ds_balance, "DeepSeek")
         yield event.plain_result(result)
 
     # 查询IP命令
@@ -709,12 +800,22 @@ class PluginBalanceIP(Star):
     async def query_help(self, event: AstrMessageEvent):
         """显示帮助信息"""
         help_text = (
-            "使用方法：\n"
-            "/硅基余额 <API密钥>: 查询硅基流动平台的余额\n"
-            "/DS余额 <API密钥>: 查询DeepSeek平台的余额\n"
-            "/GPT余额 <API密钥>: 查询OpenAI平台的余额\n"
-            "/查询IP <IP地址/域名（不用加https:/）>: 查询指定IP地址的归属地和运营商信息\n"
-            "/ping <域名/IP地址>: 测试指定域名或IP的连通性和延迟\n"
-            "/查询帮助: 显示命令的帮助信息\n"
+            "✨ AstrBot 余额查询与网络工具插件 ✨\n\n"
+            "💰 余额查询命令（支持批量查询）：\n"
+            "/硅基余额 <API密钥>: 查询硅基流动平台余额\n"
+            "/DS余额 <API密钥>: 查询DeepSeek平台余额\n"
+            "/GPT余额 <API密钥>: 查询OpenAI平台余额\n\n"
+            "🚀 批量查询支持：\n"
+            "• 多个密钥用空格分隔：/硅基余额 key1 key2 key3\n"
+            "• 多个密钥用换行分隔：\n"
+            "  /硅基余额 key1\n"
+            "  key2\n"
+            "  key3\n"
+            "• 多个密钥用逗号分隔：/硅基余额 key1,key2,key3\n\n"
+            "🌐 网络工具命令：\n"
+            "/查询IP <IP地址/域名>: 查询IP归属地和运营商信息\n"
+            "/ping <域名/IP地址>: 测试网络连通性和延迟\n"
+            "/查询帮助: 显示此帮助信息\n\n"
+            "🔒 安全提示：批量查询会自动隐藏部分密钥内容保护隐私"
         )
         yield event.plain_result(help_text)
