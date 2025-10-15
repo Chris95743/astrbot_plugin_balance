@@ -44,7 +44,7 @@
       ,
       "newapi_base_url": {
         "description": "NEW API 基地址",
-        "type": "str",
+        "type": "string",
         "hint": "你的 NEW API 服务基地址，例如：https://your-newapi-server，不需要带 /api/usage/token",
         "default": ""
       }
@@ -70,3 +70,4 @@
     }
   }
 }
+
