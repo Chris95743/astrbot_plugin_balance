@@ -20,7 +20,7 @@
         "description": "测试端口列表",
         "type": "list",
         "hint": "网络连通性测试时要检测的TCP端口，用逗号分隔，例如：22,23,80,443",
-        "default": [22, 80, 443, 3306, 5000, 6099, 6185]
+        "default": [22, 23, 80, 443, 3306, 5000, 6099, 6185]
       }
     }
   },
@@ -40,6 +40,13 @@
         "type": "int",
         "hint": "API请求失败时的最大重试次数",
         "default": 3
+      }
+      ,
+      "newapi_base_url": {
+        "description": "NEW API 基地址",
+        "type": "str",
+        "hint": "你的 NEW API 服务基地址，例如：https://your-newapi-server，不需要带 /api/usage/token",
+        "default": ""
       }
     }
   },
