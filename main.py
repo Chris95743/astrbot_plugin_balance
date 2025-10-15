@@ -16,6 +16,7 @@ SILICONFLOW_API_URL = "https://api.siliconflow.cn/v1/user/info"
 OPENAI_API_BASE_URL = "https://api.openai.com"
 DEEPSEEK_API_URL = "https://api.deepseek.com/user/balance"
 IP_API_URL = "http://ip-api.com/json/"
+NEWAPI_TOKEN_USAGE_PATH = "/api/usage/token"
 
 async def query_siliconflow_balance(api_key):
     """查询硅基流动平台余额信息"""
@@ -112,6 +113,92 @@ async def query_ds_balance(api_key):
                 return result
         except aiohttp.ClientError as e:
             return f"请求错误: {e}"
+
+async def query_newapi_balance(api_base_url: str, api_key: str, request_timeout: float = 10.0, max_retries: int = 3):
+    """查询自定义 NEW API 的令牌用量信息
+
+    接口：GET {api_base_url}/api/usage/token
+    认证：Authorization: Bearer {api_key}
+    成功返回 data 对象，包含 total_granted/total_used/total_available/unlimited_quota/model_limits/expires_at 等
+    """
+    if not api_base_url:
+        return "请先在插件设置中配置 newapi_base_url（NEW API 基地址），如：https://your-newapi-server"
+
+    url = api_base_url.rstrip('/') + NEWAPI_TOKEN_USAGE_PATH
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json"
+    }
+
+    timeout = aiohttp.ClientTimeout(total=request_timeout) if request_timeout else None
+
+    last_err = None
+    for attempt in range(1, max(1, int(max_retries)) + 1):
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, headers=headers) as resp:
+                    # 优先尝试 JSON，失败再读文本
+                    try:
+                        data = await resp.json()
+                    except Exception:
+                        text = await resp.text()
+                        return f"NEW API 返回非 JSON 数据（HTTP {resp.status}）：{text[:200]}"
+
+            # 兼容两种成功/失败风格：{"code": true} 或 {"success": true}
+            ok_flag = bool(data.get("code", False) or data.get("success", False))
+            if not ok_flag and resp.status != 200:
+                # 非 200 且标识不成功
+                last_err = data.get("message") or f"HTTP {resp.status}"
+            if not ok_flag and resp.status == 200 and "data" not in data:
+                # 虽 200 但无 data
+                last_err = data.get("message") or "响应缺少 data 字段"
+            if ok_flag and "data" not in data:
+                last_err = "响应缺少 data 字段"
+            if ok_flag and "data" in data:
+                d = data["data"] or {}
+                name = d.get("name", "-")
+                total_granted = d.get("total_granted", 0)
+                total_used = d.get("total_used", 0)
+                total_available = d.get("total_available", 0)
+                unlimited = d.get("unlimited_quota", False)
+                model_limits_enabled = d.get("model_limits_enabled", False)
+                model_limits = d.get("model_limits") or {}
+                expires_at = d.get("expires_at", 0)
+
+                # 格式化到期时间
+                expires_str = "永不过期" if not expires_at else datetime.fromtimestamp(expires_at).strftime("%Y-%m-%d %H:%M:%S")
+
+                # 模型限额摘要
+                model_summary = "未启用"
+                if model_limits_enabled and isinstance(model_limits, dict):
+                    enabled_models = [m for m, v in model_limits.items() if v]
+                    if enabled_models:
+                        model_summary = ", ".join(enabled_models[:10])
+                        if len(enabled_models) > 10:
+                            model_summary += " 等"
+                    else:
+                        model_summary = "启用但列表为空"
+
+                result = (
+                    f"NEW API 令牌用量信息:\n"
+                    f"令牌名称: {name}\n"
+                    f"额度（总/已用/剩余）: {total_granted} / {total_used} / {total_available}\n"
+                    f"是否无限额度: {'是' if unlimited else '否'}\n"
+                    f"模型限额: {'启用' if model_limits_enabled else '未启用'}\n"
+                    f"允许模型: {model_summary}\n"
+                    f"到期时间: {expires_str}\n"
+                )
+                return result
+
+        except aiohttp.ClientError as e:
+            last_err = str(e)
+        except asyncio.TimeoutError:
+            last_err = "请求超时"
+
+        # 简单指数退避
+        await asyncio.sleep(min(2 ** (attempt - 1), 3))
+
+    return f"查询 NEW API 用量失败：{last_err or '未知错误'}"
 
 async def ping_host(host, count=4, ping_timeout=30.0, test_ports=None, tcp_timeout=3.0):
     if test_ports is None:
@@ -491,8 +578,8 @@ def is_ip_address(address):
 @register(
     "astrbot_plugin_balance",
     "Chris", 
-    "支持硅基流动、OpenAI、DeepSeek余额查询及IP查询功能", 
-    "v1.1.0", 
+    "支持硅基流动、OpenAI、DeepSeek、NEW API 余额查询及IP查询功能", 
+    "v1.5.0", 
     "https://github.com/Chris95743/astrbot_plugin_balance"
 )
 class PluginBalanceIP(Star):
@@ -516,6 +603,7 @@ class PluginBalanceIP(Star):
         api_config = self.config.get("api_config", {})
         self.request_timeout = api_config.get("request_timeout", 10.0)
         self.max_retries = api_config.get("max_retries", 3)
+        self.newapi_base_url = api_config.get("newapi_base_url", "")
         
         # 显示配置
         display_config = self.config.get("display_config", {})
@@ -675,6 +763,21 @@ class PluginBalanceIP(Star):
         result = await self._batch_query_balance(api_keys, query_ds_balance, "DeepSeek")
         yield event.plain_result(result)
 
+    # 查询NEW余额命令
+    @filter.command("NEW余额")
+    async def newapi_balance(self, event: AstrMessageEvent):
+        """查询 NEW API 余额（支持批量查询）"""
+        if not self.newapi_base_url:
+            yield event.plain_result("未配置 newapi_base_url（NEW API 基地址）。请在插件设置中配置，如：https://your-newapi-server")
+            return
+        api_keys = self._get_multiple_api_keys(event)
+
+        async def _q(k: str):
+            return await query_newapi_balance(self.newapi_base_url, k, self.request_timeout, self.max_retries)
+
+        result = await self._batch_query_balance(api_keys, _q, "NEW API")
+        yield event.plain_result(result)
+
     # 查询IP命令
     @filter.command("查询IP")
     async def query_ip_info(self, event: AstrMessageEvent):
@@ -829,7 +932,8 @@ class PluginBalanceIP(Star):
             "💰 余额查询命令（支持批量查询）：\n"
             "/硅基余额 <API密钥>: 查询硅基流动平台余额\n"
             "/DS余额 <API密钥>: 查询DeepSeek平台余额\n"
-            "/GPT余额 <API密钥>: 查询OpenAI平台余额\n\n"
+            "/GPT余额 <API密钥>: 查询OpenAI平台余额\n"
+            "/NEW余额 <API密钥>: 查询NEW API令牌用量（需配置 newapi_base_url）\n\n"
             "🚀 批量查询支持：\n"
             "• 多个密钥用空格分隔：/硅基余额 key1 key2 key3\n"
             "• 多个密钥用换行分隔：\n"
