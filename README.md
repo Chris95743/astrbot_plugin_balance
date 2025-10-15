@@ -19,6 +19,7 @@ _✨ [astrbot](https://github.com/AstrBotDevs/AstrBot) 全能网络工具 - 余�
 ### 💰 余额查询
 - **硅基流动** - 查询账户余额、充值余额、总余额等详细信息
 - **DeepSeek** - 查询AI平台余额信息
+- **NewAPI** - 查询NEW API令牌用量（需配置 newapi_base_url）
 - **OpenAI** - 查询GPT平台账户额度和使用情况
 
 ### 🌐 网络工具
@@ -80,6 +81,7 @@ exit
 /硅基余额 sk-xxxxxxxxxxxxxxxxxxxxx
 /DS余额 sk-xxxxxxxxxxxxxxxxxxxxx
 /GPT余额 sk-xxxxxxxxxxxxxxxxxxxxx
+/NEW余额 sk-xxxxxxxxxxxxxxxxxxxxx（需配置 newapi_base_url）
 ```
 
 ### 🌐 网络工具命令
